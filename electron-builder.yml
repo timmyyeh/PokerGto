@@ -1,0 +1,25 @@
+appId: com.pokercoach.app
+productName: Poker Coach
+directories:
+  output: dist
+  buildResources: build
+files:
+  - out/**/*
+  - package.json
+mac:
+  category: public.app-category.games
+  target:
+    - dmg
+    - zip
+  identity: null
+win:
+  target:
+    - nsis
+linux:
+  target:
+    - AppImage
+    - deb
+  category: Game
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
