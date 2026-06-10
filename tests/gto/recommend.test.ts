@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { startHand, applyAction } from '@engine/gameState';
-import { recommend, snapshotFor } from '@gto/recommend';
+import { accuracyScore, gradeDecision, recommend, snapshotFor } from '@gto/recommend';
 import { freshDeck, stringToCard } from '@engine/deck';
-import { Card } from '@shared/types';
+import { Card, GameStateSnapshot, Recommendation } from '@shared/types';
 
 const cs = (s: string) => stringToCard(s);
 
@@ -131,6 +131,117 @@ describe('recommend', () => {
 
     const rec = recommend(s, s.toAct); // hero's turn
     expect(rec.action).toBe('fold');
+  });
+});
+
+describe('strategy mix', () => {
+  it('returns a normalized strategy sorted by frequency', () => {
+    const s = startHand(seeds8, { smallBlind: 1, bigBlind: 2, buttonSeat: 0 });
+    const rec = recommend(s, s.toAct);
+    expect(rec.strategy.length).toBeGreaterThan(0);
+    const total = rec.strategy.reduce((sum, o) => sum + o.frequency, 0);
+    expect(total).toBeCloseTo(1, 5);
+    for (let i = 1; i < rec.strategy.length; i++) {
+      expect(rec.strategy[i - 1].frequency).toBeGreaterThanOrEqual(rec.strategy[i].frequency);
+    }
+    expect(rec.action).toBe(rec.strategy[0].action);
+    expect(rec.concepts.length).toBeGreaterThan(0);
+  });
+
+  it('recommends a jam with a strong hand at 8bb', () => {
+    const seeds = Array.from({ length: 8 }, (_, i) => ({
+      seat: i,
+      name: `P${i}`,
+      isHero: i === 0,
+      stack: 16, // 8bb at 1/2
+    }));
+    const hole = new Map<number, [Card, Card]>([
+      [0, [cs('Ah'), cs('Th')]],
+      [1, [cs('2c'), cs('3d')]],
+      [2, [cs('2h'), cs('3h')]],
+      [3, [cs('7c'), cs('2d')]],
+      [4, [cs('5c'), cs('6d')]],
+      [5, [cs('Ts'), cs('9c')]],
+      [6, [cs('Jc'), cs('8c')]],
+      [7, [cs('4d'), cs('4s')]],
+    ]);
+    const deck = buildRiggedDeck(hole, 0);
+    const s = startHand(seeds, { smallBlind: 1, bigBlind: 2, buttonSeat: 0, deck });
+    // Fold to the BTN (hero).
+    for (const seat of [3, 4, 5, 6, 7]) {
+      expect(s.toAct).toBe(seat);
+      applyAction(s, { type: 'fold' });
+    }
+    expect(s.toAct).toBe(0);
+    const rec = recommend(s, 0);
+    expect(rec.action).toBe('allin');
+  });
+});
+
+describe('gradeDecision', () => {
+  const snapshot: GameStateSnapshot = {
+    pot: 10,
+    toCall: 5,
+    heroStack: 100,
+    heroCards: [],
+    board: [],
+    numActiveOpponents: 1,
+    street: 'flop',
+    bigBlind: 2,
+  };
+  const rec: Recommendation = {
+    action: 'raise',
+    raiseSize: 14,
+    equity: 0.7,
+    potOdds: 0.33,
+    reason: 'test',
+    strategy: [
+      { action: 'raise', amount: 14, label: 'Raise to 14', frequency: 0.7 },
+      { action: 'call', amount: 5, label: 'Call 5', frequency: 0.3 },
+    ],
+    concepts: [],
+  };
+
+  it('grades the top action as best', () => {
+    const g = gradeDecision(rec, { type: 'raise', amount: 14 }, snapshot);
+    expect(g.grade).toBe('best');
+    expect(g.evLossBB).toBe(0);
+  });
+
+  it('grades the secondary mix arm as good', () => {
+    const g = gradeDecision(rec, { type: 'call' }, snapshot);
+    expect(g.grade).toBe('good');
+  });
+
+  it('downgrades a wildly oversized raise', () => {
+    const g = gradeDecision(rec, { type: 'raise', amount: 100 }, snapshot);
+    expect(g.grade).not.toBe('best');
+  });
+
+  it('grades folding a big-equity hand as a blunder with EV loss', () => {
+    const callRec: Recommendation = {
+      ...rec,
+      strategy: [{ action: 'call', amount: 5, label: 'Call 5', frequency: 1 }],
+      action: 'call',
+    };
+    const g = gradeDecision(callRec, { type: 'fold' }, snapshot);
+    // EV(call) = 0.7 * 15 - 5 = 5.5 chips = 2.75bb lost.
+    expect(g.grade).toBe('blunder');
+    expect(g.evLossBB).toBeGreaterThan(2);
+  });
+});
+
+describe('accuracyScore', () => {
+  it('100 for all best, 0 for all blunders', () => {
+    expect(accuracyScore(['best', 'best'])).toBe(100);
+    expect(accuracyScore(['blunder'])).toBe(0);
+    expect(accuracyScore([])).toBe(100);
+  });
+
+  it('mixes proportionally', () => {
+    const score = accuracyScore(['best', 'mistake']);
+    expect(score).toBeGreaterThan(50);
+    expect(score).toBeLessThan(100);
   });
 });
 

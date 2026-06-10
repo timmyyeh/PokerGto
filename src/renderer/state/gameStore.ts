@@ -1,9 +1,18 @@
 import { create } from 'zustand';
-import { GameState, PlayerAction } from '@shared/types';
+import { DecisionGrade, GameState, PlayerAction } from '@shared/types';
 import { startHand, applyAction, legalActions } from '@engine/gameState';
 import { decideAction } from '@ai/bot';
 import { PERSONALITY_LIST, PersonalityName } from '@ai/personalities';
-import { recommend, snapshotFor } from '@gto/recommend';
+import { gradeDecision, recommend, snapshotFor } from '@gto/recommend';
+
+export type ActionFeedback = {
+  grade: DecisionGrade;
+  /** Label of the top recommended option, e.g. "Raise to 5 (2.5bb)". */
+  recommended: string;
+  evLossBB: number;
+  /** Monotonic counter so the UI can re-trigger the toast per action. */
+  id: number;
+};
 
 export type GameMode = 'cash' | 'tournament';
 
@@ -29,6 +38,8 @@ type GameStore = {
   stacks: Record<number, number>;
   /** Tournament: place finished for hero (1 = won, N = first eliminated). null if not finished. */
   tournamentFinish: number | null;
+  /** Instant coaching feedback for the hero's most recent action. */
+  lastFeedback: ActionFeedback | null;
 
   startSession: (config: GameConfig) => void;
   startNewHand: () => void;
@@ -49,6 +60,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   levelStartedAt: null,
   stacks: {},
   tournamentFinish: null,
+  lastFeedback: null,
 
   startSession: (config) => {
     const heroSeat = 0;
@@ -92,10 +104,12 @@ export const useGameStore = create<GameStore>((set, get) => ({
     // Determine blinds (tournament: use level; cash: fixed).
     let sb = config.smallBlind;
     let bb = config.bigBlind;
+    let ante = 0;
     const tournamentLevel = get().currentLevelIndex;
     if (config.mode === 'tournament' && config.levels && config.levels[tournamentLevel]) {
       sb = config.levels[tournamentLevel].sb;
       bb = config.levels[tournamentLevel].bb;
+      ante = config.levels[tournamentLevel].ante;
     }
 
     // In cash games, refill busted bots to buy-in.
@@ -138,9 +152,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const state = startHand(seeds, {
       smallBlind: sb,
       bigBlind: bb,
+      ante,
       buttonSeat: nextButton,
     });
-    set({ state, buttonSeat: nextButton });
+    set({ state, buttonSeat: nextButton, lastFeedback: null });
 
     // If hero isn't to act, start running bots.
     get().runBots();
@@ -164,20 +179,31 @@ export const useGameStore = create<GameStore>((set, get) => ({
   },
 
   submitHeroAction: (action) => {
-    const { state, heroSeat } = get();
+    const { state, heroSeat, lastFeedback } = get();
     if (!state || state.toAct !== heroSeat || state.street === 'complete') return;
     // Capture decision (snapshot + recommendation) BEFORE applying.
     const snapshot = snapshotFor(state, heroSeat);
     const rec = recommend(state, heroSeat);
+    const { grade, evLossBB } = gradeDecision(rec, action, snapshot);
     state.decisions.push({
       street: state.street,
       seat: heroSeat,
       snapshot,
       actual: action,
       recommendation: rec,
+      grade,
+      evLossBB,
     });
     applyAction(state, action);
-    set({ state: { ...state } });
+    set({
+      state: { ...state },
+      lastFeedback: {
+        grade,
+        recommended: rec.strategy[0]?.label ?? rec.action,
+        evLossBB,
+        id: (lastFeedback?.id ?? 0) + 1,
+      },
+    });
     get().runBots();
   },
 
@@ -221,7 +247,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   },
 
   endSession: () => {
-    set({ config: null, state: null, tournamentFinish: null });
+    set({ config: null, state: null, tournamentFinish: null, lastFeedback: null });
   },
 }));
 

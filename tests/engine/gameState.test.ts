@@ -28,6 +28,19 @@ describe('startHand', () => {
     expect(getPlayer(s, 1).bet).toBe(2); // BB
     expect(s.toAct).toBe(0);
   });
+
+  it('antes go to the pot without counting toward street bets', () => {
+    const s = startHand(seeds(8), { smallBlind: 1, bigBlind: 2, buttonSeat: 0, ante: 1 });
+    expect(s.pot).toBe(8 + 3); // 8 antes + SB + BB
+    expect(s.ante).toBe(1);
+    expect(getPlayer(s, 1).bet).toBe(1); // SB street bet excludes ante
+    expect(getPlayer(s, 2).bet).toBe(2); // BB street bet excludes ante
+    expect(getPlayer(s, 0).totalContribution).toBe(1); // BTN paid only the ante
+    expect(getPlayer(s, 2).totalContribution).toBe(3); // ante + BB
+    expect(s.currentBet).toBe(2);
+    // Calling still costs exactly the BB.
+    expect(legalActions(s).callAmount).toBe(2);
+  });
 });
 
 describe('betting round flow', () => {

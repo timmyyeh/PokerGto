@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { getPreflopAction } from '@gto/preflopCharts';
+import { getPreflopAction, preflopMix } from '@gto/preflopCharts';
 import { stringToCard } from '@engine/deck';
 
 const cs = (s: string) => stringToCard(s);
@@ -79,5 +79,76 @@ describe('getPreflopAction', () => {
   it('always returns a non-empty reason string', () => {
     const a = getPreflopAction([cs('Ah'), cs('Kd')], 'CO', 'open');
     expect(a.reason.length).toBeGreaterThan(10);
+  });
+});
+
+describe('preflopMix', () => {
+  it('frequencies sum to ~1 in every scenario', () => {
+    const hands: [string, string][] = [
+      ['Ah', 'Ad'],
+      ['Kh', 'Qh'],
+      ['7c', '2h'],
+      ['9s', '8s'],
+      ['Ac', '5c'],
+    ];
+    const scenarios = ['open', 'vsRaise', 'vs3bet', 'vs4bet', 'limpedPot'] as const;
+    for (const [c1, c2] of hands) {
+      for (const scenario of scenarios) {
+        const mix = preflopMix([cs(c1), cs(c2)], {
+          position: 'CO',
+          scenario,
+          aggressorPosition: 'MP',
+          limpers: 1,
+          effectiveBB: 100,
+        });
+        expect(mix.raise + mix.call + mix.fold).toBeCloseTo(1, 5);
+        expect(mix.why.length).toBeGreaterThan(10);
+      }
+    }
+  });
+
+  it('switches to jam-or-fold at 8bb', () => {
+    const jam = preflopMix([cs('Ah'), cs('Th')], {
+      position: 'BTN',
+      scenario: 'open',
+      effectiveBB: 8,
+    });
+    expect(jam.jam).toBe(true);
+    expect(jam.raise).toBe(1);
+
+    const fold = preflopMix([cs('7c'), cs('2h')], {
+      position: 'BTN',
+      scenario: 'open',
+      effectiveBB: 8,
+    });
+    expect(fold.raise).toBe(0);
+    expect(fold.fold).toBe(1);
+  });
+
+  it('AA 5-bet jams vs a 4bet; junk folds', () => {
+    const aa = preflopMix([cs('Ah'), cs('Ad')], {
+      position: 'BTN',
+      scenario: 'vs4bet',
+      effectiveBB: 100,
+    });
+    expect(aa.jam).toBe(true);
+    expect(aa.raise).toBe(1);
+
+    const junk = preflopMix([cs('9c'), cs('4d')], {
+      position: 'BTN',
+      scenario: 'vs4bet',
+      effectiveBB: 100,
+    });
+    expect(junk.fold).toBe(1);
+  });
+
+  it('BB defends T9s vs a BTN open but folds it vs an UTG 3-bet-sized spot', () => {
+    const defend = preflopMix([cs('Th'), cs('9h')], {
+      position: 'BB',
+      scenario: 'vsRaise',
+      aggressorPosition: 'BTN',
+      effectiveBB: 100,
+    });
+    expect(defend.call + defend.raise).toBeGreaterThan(0.5);
   });
 });

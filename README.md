@@ -32,11 +32,16 @@ Built with **Electron + React + TypeScript + Vite + Tailwind**.
 - **8-max No-Limit Hold'em** vs 7 AI opponents with distinct personalities.
 - **Two game modes**:
   - **Cash** — fixed blinds and buy-in. Busted bots auto-rebuy.
-  - **Single-Table Tournament** — escalating blind levels on a timer, last player standing wins.
+  - **Single-Table Tournament** — escalating blind levels on a timer, **antes**, short-stack push/fold play, last player standing wins.
+- **Range-based GTO coaching**: every opponent is put on a real range (inferred from their position and actions), and your equity is computed **vs those ranges**, not vs random hands.
+- **GTO Wizard-style strategy mixes**: each reviewed decision shows the full mixed strategy (e.g. *Raise to 11bb 70% / Call 30%*) with a frequency bar, not just one "correct" answer.
+- **Decision grading**: every action is graded *Best / Good / Inaccuracy / Mistake / Blunder* with an estimated EV loss in big blinds, plus a per-hand accuracy score — and an **instant feedback toast** at the table right after you act.
+- **The numbers that matter**, every spot: equity vs range, required equity (pot odds), minimum defense frequency (MDF), and the EV of calling in bb.
+- **Plain-language coaching**: each recommendation explains the *why* in concepts (pot odds, semi-bluffing, range advantage, MDF, implied odds) — patterns, not memorization.
+- **Solver-approximation preflop charts**: positional RFI ranges (~10% UTG to ~46% BTN), 3-bet/call/fold responses by position matchup, 4-bet/5-bet trees, BB defense, and Nash-style jam/fold ranges at ≤10bb.
 - **Cryptographically random** card dealing using the Web Crypto API (Fisher-Yates shuffle with rejection sampling — no `Math.random` for cards).
-- **Real betting mechanics**: side pots, min-raise rule, all-in for-less semantics, dead small blinds when seats are empty.
-- **Post-hand review** with per-decision breakdown: recommended action, equity, pot odds, and a 2-3 sentence explanation.
-- **Pluggable GTO engine** — currently a heuristic + Monte Carlo equity hybrid; designed so a real CFR solver can drop in later without touching the UI.
+- **Real betting mechanics**: side pots, min-raise rule, all-in for-less semantics, antes, dead small blinds when seats are empty.
+- **Pluggable GTO engine** — range model + Monte Carlo + solver-derived heuristics today; designed so a real CFR solver can drop in later without touching the UI.
 - **Settings persistence** (electron-store) — your mode, blinds, and buy-in are remembered between launches.
 - **Hand history** of the last 500 hands persisted locally.
 - **Packageable** for macOS (dmg/zip), Windows (NSIS), and Linux (AppImage/deb) via electron-builder.
@@ -69,8 +74,9 @@ The Electron window opens at the Lobby. Choose **Cash** or **Tournament**, set b
 2. **Table** — you sit at the bottom seat (the "Hero" seat). 7 bots fill the other seats. The dealer button rotates clockwise each hand. The current to-act player has a pulsing green ring around their seat tag.
 3. **Action bar** (bottom center) — appears whenever it's your turn:
    - **Fold** — give up the hand.
-   - **Check / Call** — match the current bet for free (check) or for the displayed amount (call).
-   - **Bet / Raise** — drag the slider or click **Min / ½ pot / Pot / All-in** for quick sizings, then click the green button.
+   - **Check / Call** — match the current bet for free (check) or for the displayed amount (call). The call button shows the **equity you need** for the call to be profitable.
+   - **Bet / Raise** — drag the slider or click **Min / 33% / 50% / 75% / Pot / All-in** for quick sizings, then click the green button. Amounts are shown in chips and big blinds.
+   - After each action a **feedback toast** appears at the top of the table grading your play (Best/Good/Inaccuracy/Mistake/Blunder); the full breakdown waits in the review.
 4. **Bots auto-act** when it's not your turn. The pot, board, and bet chips update live.
 5. **Hand ends** — winners are revealed (their cards become face-up) and after ~1.2 seconds the **Review screen** appears.
 6. **Review** — click any of your decisions in the timeline at top to see the recommendation, equity, pot odds, and explanation for that specific spot. When done, click **Next Hand** to deal again or **Back to Lobby** to change settings.
@@ -123,7 +129,7 @@ The default blind schedule has 8 escalating levels:
 | 7 | 150 | 300 | 30 |
 | 8 | 200 | 400 | 50 |
 
-> **Note:** Ante posting is defined in the schedule but not yet collected by the betting engine — antes will be added in a future iteration.
+Antes are collected from every player from level 4 on and go straight to the pot. As stacks get shallow the coach (and the bots) switch to Nash-style **jam-or-fold** play at ≤10 big blinds. When players bust, the table re-assigns the *late* positions first (a 6-handed table has MP/HJ/CO, not three UTGs), so the preflop charts stay accurate all the way to heads-up.
 
 When a player's stack hits 0 they're eliminated. The tournament ends when hero is eliminated *or* hero is the lone survivor. A **Game Over** screen shows your finishing place.
 
@@ -133,17 +139,18 @@ When a player's stack hits 0 they're eliminated. The tournament ends when hero i
 
 The review screen is the heart of the teaching feature. It only appears at the end of each hand and only shows decisions *you* made (bot decisions aren't shown).
 
-**Left panel — Spot**
-- Street, position, pot size, amount to call, your stack, number of opponents still in
-- Your hole cards
-- The board at that moment
+**Header** — your **accuracy score** for the hand (0–100, weighted by decision grades) and total estimated EV lost in big blinds. Each decision chip in the timeline carries a colored grade dot.
 
-**Right panel — Recommendation**
-- **Equity** (%) — your win probability vs the estimated villain ranges
-- **Pot odds (need)** (%) — equity you need for a profitable call
-- **GTO recommendation** — fold / check / call / bet / raise (with sizing)
-- **Your action** — what you actually did, with a ✓ if it matched the recommendation or ✗ if it didn't
-- **Why** — 2-3 sentence explanation citing equity, pot odds, hand class, and range considerations
+**Left panel — The Spot**
+- Street, position, pot / to-call / stack (in chips **and** big blinds), opponents still in, hand class
+- Your hole cards and the board at that moment
+- **Opponent range model** — what range each villain is on and why (e.g. *"CO open (~28% of hands)"*, *"BB check (wide)"*)
+
+**Right panel — Strategy**
+- **Verdict banner** — your grade (*Best play ✓* … *Blunder ✗*), your action vs the GTO primary action, and estimated EV lost
+- **GTO strategy mix** — a stacked frequency bar plus per-option rows: every action in the equilibrium mix with its sizing and frequency (e.g. *Bet 12 (66% pot) — 55%, Check — 45%*)
+- **The numbers** — equity vs range, equity needed (pot odds), minimum defense frequency (MDF), EV of calling in bb
+- **Why** — concept tags (*Pot odds*, *Semi-bluff*, *MDF*, *Range betting*, …) and a plain-language explanation of the reasoning
 
 Click any decision in the timeline at the top to jump to that spot.
 
@@ -205,43 +212,35 @@ Standard Electron 3-process split with all game logic in a pure `engine/` module
 
 ## How the GTO Engine Works
 
-The GTO engine is a **pragmatic MVP**, not a true CFR solver. It combines three signals to produce a recommendation:
+The engine approximates solver play with four cooperating pieces. It is not a CFR solver, but every recommendation is grounded in the same quantities a solver balances: range vs range equity, pot odds, MDF, and fold equity.
 
-### 1. Preflop charts (`src/gto/preflopCharts.ts`)
+### 1. Preflop range data (`src/gto/ranges.ts`)
 
-A simplified position-based chart. For each `(position, hand, scenario)` it returns one of `raise / call / check / fold` with a written reason.
+Hand ranges are written in standard poker notation (`"TT+, ATs+, KQo:0.5"`) and parsed into weighted 169-grid ranges:
 
-- **Scenarios**: `open`, `vsRaise`, `vs3bet`, `limpedPot`.
-- **Position tightness multipliers** scale the open threshold: UTG needs stronger hands than BTN.
-- **Hand strength**: computed via a Chen-like formula (`src/ai/handStrength.ts#preflopStrength`).
-- **Premium hands** (`AA, KK, QQ, JJ, AKs, AKo`) always 3bet vs an opening raise.
+- **RFI charts** per position, ~10% (UTG) widening to ~46% (BTN), with mixed-frequency edge hands.
+- **vs-RFI responses** (3-bet / call / fold) keyed by opener bucket (EP/MP/LP/SB) × responder context (in position / SB / BB). The BB defends far wider vs a BTN open than vs an UTG open.
+- **vs-3bet / vs-4bet trees**: value 4-bets, A5s-type bluffs, 5-bet jams.
+- **Jam-or-fold ranges** for ≤10bb stacks (Nash-style, by position).
+- Modeling ranges for passive lines: open-limps, over-limps, BB preflop checks.
 
-### 2. Equity calculator (`src/gto/equity.ts`)
+### 2. Villain range model (`src/gto/rangeModel.ts`)
 
-A Monte Carlo equity calculator. Given hero's hole cards, the current board, and the number of opponents, it:
+Each opponent still in the hand is assigned a weighted range from their actions: open-raisers get their positional RFI range, 3-bettors get a 3-bet range, callers get a flat range, limpers get a loose-passive range, and a BB check gets "everything except the iso-raising hands". Postflop aggression narrows the range toward hands that connect with the board (with a residue of bluffs kept in).
 
-1. Removes used cards from a fresh deck.
-2. For N iterations (default 600 postflop, 300 preflop), shuffles remaining cards, deals random hole cards to each opponent, fills the board to 5 cards.
-3. Evaluates all hands using `pokersolver`.
-4. Returns hero's win probability (ties count as half-wins).
+### 3. Range-aware equity (`src/gto/equity.ts`)
 
-**Important MVP limitation**: opponents are dealt *random* hands, not range-filtered hands. So "equity" here means "equity vs a random opponent" — true GTO equity would condition on the opponent's preflop range narrowed by their postflop actions. The interface is range-aware (the `numOpponents` parameter is a stand-in) so a future range-aware version can drop in.
+Monte Carlo equity where each villain's hole cards are **sampled from their modeled range** (weighted, card-conflict aware) rather than dealt at random. ~700 iterations postflop, ~400 preflop, evaluated with `pokersolver`. Ties count as half-wins.
 
-### 3. Recommender (`src/gto/recommend.ts`)
+### 4. Strategy engine (`src/gto/recommend.ts`)
 
-Combines the above:
+Produces a **mixed strategy** (a set of actions with sizings and frequencies), not a single answer:
 
-- **Preflop**: looks up the chart action; sizes raises to 2.2–3.0 BB depending on position.
-- **Postflop, no bet to face**:
-  - `equity ≥ 60%` → value bet 2/3 pot
-  - `equity ≥ 45%` and made hand → small bet 1/2 pot
-  - else → check
-- **Postflop, facing a bet**:
-  - `equity ≥ potOdds + 18%` → raise
-  - `equity ≥ potOdds + 3%` → call
-  - else → fold
+- **Preflop**: chart-driven mixes with position-based open sizes (2.2–3.0bb), 3-bet sizing 3x IP / 4x OOP, 4-bets at 2.3x, automatic jam-or-fold at ≤10bb effective.
+- **Postflop**: classifies the hand (*Monster / Strong value / Strong draw / Draw / Marginal / Air*) from equity vs range plus draw detection, reads the board texture (dry/wet/paired/monotone), and builds the mix from GTO principles — small high-frequency range bets on dry boards with the range advantage, polarized big bets with monsters, semi-bluff mixes with draws, MDF-based bluff-catching, and indifference mixing in true coin-flip spots.
+- **Grading** (`gradeDecision`): your actual action is located in the mix — top-frequency arm → *Best*, secondary arm → *Good*, rare arm → *Inaccuracy*; actions outside the mix get an estimated EV loss in bb (e.g. folding a hand with EV(call) = +2.7bb is a *Blunder*). `accuracyScore` aggregates a hand into a 0–100 score.
 
-The explanation (`reason` field) is generated inline by stringing together the actual equity/pot-odds numbers and a sentence about the spot.
+Every recommendation also reports equity, required equity, MDF, EV of calling, the villain range summary, and concept tags used by the Review UI.
 
 ### Designed for replacement
 
@@ -257,7 +256,7 @@ A future real solver implementation can replace `src/gto/recommend.ts` (and add 
 
 ## AI Bot Personalities
 
-Bots use `src/ai/bot.ts#decideAction` which works similarly to `recommend` but with personality-tuned thresholds. The 5 personalities live in `src/ai/personalities.ts`:
+Bots play **from the same GTO preflop charts as the coach**, with personality skews applied as `frequency^(1/aggression)` — so pure strategies stay pure (every bot still always opens AA) while borderline hands shift with style. Postflop they use personality thresholds plus draw-aware semi-bluffs, pot-odds-based calls, and short-stack jams. The 5 personalities live in `src/ai/personalities.ts`:
 
 | Personality | Preflop tightness | Postflop aggression | Bluff freq | Notes |
 |---|---|---|---|---|
@@ -300,9 +299,11 @@ poker-coach/
 │   │   ├── positions.ts             # assign BTN/SB/BB/UTG... + action order
 │   │   └── gameState.ts             # state machine, betting rounds, side pots
 │   ├── gto/                         # teaching engine (pluggable)
-│   │   ├── equity.ts                # Monte Carlo equity
-│   │   ├── preflopCharts.ts         # static charts by position/scenario
-│   │   └── recommend.ts             # produces Recommendation + reason
+│   │   ├── ranges.ts                # range notation parser + preflop range data
+│   │   ├── rangeModel.ts            # infers villain ranges from the action log
+│   │   ├── equity.ts                # Monte Carlo equity (range-aware + random)
+│   │   ├── preflopCharts.ts         # mixed preflop strategies from range data
+│   │   └── recommend.ts             # strategy mixes, grading, explanations
 │   ├── ai/                          # bot opponents
 │   │   ├── handStrength.ts          # Chen-formula + made-hand strength
 │   │   ├── personalities.ts         # 5 personality threshold sets
@@ -359,20 +360,24 @@ poker-coach/
 
 ## Tests
 
-**61 tests across 10 files**, all pure logic — no Electron/DOM required. Run with `npm test`.
+**100 tests across 12 files**, all pure logic — no Electron/DOM required. Run with `npm test`.
 
 | File | Coverage |
 |---|---|
 | `tests/engine/deck.test.ts` | Fresh-deck uniqueness, shuffle preserves cards, shuffles differ |
 | `tests/engine/handEvaluator.test.ts` | Flush detection, straight comparison, split pots |
-| `tests/engine/positions.test.ts` | 8-max / heads-up position assignment, button rotation, sparse seats |
-| `tests/engine/gameState.test.ts` | Blind posting, betting flow, raise reopening, side pots, limped pots |
+| `tests/engine/positions.test.ts` | 8-max / 6-max / 3-handed / heads-up assignment, late positions kept short-handed |
+| `tests/engine/gameState.test.ts` | Blind + ante posting, betting flow, raise reopening, side pots, limped pots |
 | `tests/ai/handStrength.test.ts` | Preflop Chen formula sanity, made-hand classification, draw recognition |
-| `tests/ai/bot.test.ts` | TAG folds 72o UTG, raises AA UTG, all personalities return legal actions |
+| `tests/ai/bot.test.ts` | TAG folds 72o UTG, raises AA UTG, short-stack jams, all personalities legal |
 | `tests/ai/fullHand.test.ts` | 50 trials of full 8-player hands; chip conservation invariant |
-| `tests/gto/equity.test.ts` | AA ~85%, 72o ~35%, made flush ~99%, equity drops with more opponents |
-| `tests/gto/preflopCharts.test.ts` | AA opens everywhere, 72o folds everywhere, BTN wider than UTG, 4bets, limped-pot defaults |
-| `tests/gto/recommend.test.ts` | Recommendation shape, AA→raise, 72o→fold, flush→value bet, weak vs big bet→fold |
+| `tests/gto/ranges.test.ts` | Range notation parser, range percentages, RFI monotonicity, BB defense width |
+| `tests/gto/rangeModel.test.ts` | Open-raisers on RFI ranges, BB checks are wide, dead-card exclusion |
+| `tests/gto/equity.test.ts` | Random-hand baselines + range-aware: KQo much worse vs UTG range than vs random |
+| `tests/gto/preflopCharts.test.ts` | Mix frequencies sum to 1, jam-or-fold at 8bb, 5-bet trees, legacy chart sanity |
+| `tests/gto/recommend.test.ts` | Strategy mix normalization, short-stack jams, decision grading tiers, accuracy score |
+
+There is also a headless smoke simulation (`npx tsx scripts/smoke.ts`) that plays hundreds of full hands with the hero following the coach, asserting every recommendation is legal, self-consistent (*following the coach always grades "Best"*), and fast (~30ms per recommendation).
 
 ### Adding a new test
 
@@ -388,8 +393,9 @@ Configuration not yet exposed in the UI (you can edit constants in source):
 
 | Where | Constant | Default |
 |---|---|---|
-| `src/gto/recommend.ts` | `MC_ITERATIONS` | 600 (postflop equity iterations) |
-| `src/gto/equity.ts` | preflop iterations arg | 300 (passed from recommender) |
+| `src/gto/recommend.ts` | `POSTFLOP_ITERATIONS` / `PREFLOP_ITERATIONS` | 700 / 400 equity iterations |
+| `src/gto/preflopCharts.ts` | `SHORT_STACK_BB` | 10 (jam-or-fold threshold) |
+| `src/gto/ranges.ts` | all range charts | RFI / vs-RFI / 3-bet / 4-bet / jam ranges |
 | `src/main/persistence.ts` | `DEFAULT_SETTINGS.tournament.levels` | 8-level schedule |
 | `src/main/persistence.ts` | history cap | 500 hands |
 | `src/renderer/state/gameStore.ts` | `BOT_NAMES` | Avery, Blake, Casey, Devon, Eli, Frankie, Gray |
@@ -427,22 +433,23 @@ Code-signing is disabled (`identity: null` for mac) — for distribution you'll 
 
 ## Roadmap & Limitations
 
-**Known MVP simplifications:**
+**Known simplifications:**
 
-- **Equity is vs random hands**, not vs estimated ranges. Real GTO equity should condition on each opponent's preflop range narrowed by their postflop actions.
-- **No CFR/solver**. All "GTO" guidance is heuristic + Monte Carlo. The architecture is designed so a real solver can swap in behind `recommend()`.
-- **No antes** — the tournament blind schedule defines them but the betting engine doesn't collect them yet.
+- **No CFR/solver.** Postflop mixes are built from GTO principles (range equity, MDF, pot odds, texture) rather than solved game trees, so frequencies are approximations. The architecture is designed so a real solver can swap in behind `recommend()`.
+- **Postflop range narrowing is coarse** — aggression re-weights a villain's range toward board-connecting hands, but bet sizes and multi-street lines aren't modeled.
+- **EV-loss numbers are estimates** for actions outside the mix (exact only for call/fold-vs-price spots).
+- **No ICM** — tournament recommendations are chip-EV (plus push/fold), not ICM-adjusted.
 - **No hand history browser** — the JSON is saved but there's no UI to replay old hands.
-- **No range visualization** — review shows action + equity + reason, but not the 13×13 hand grid that real GTO trainers display.
+- **No 13×13 range grid visualization** — ranges are described in words in the review.
 - **No multi-table tournaments**, no rebuys/add-ons (single-table only).
 - **Hero cannot rebuy** mid-cash-session — busting returns you to the lobby.
 
 **Likely next steps:**
 
-1. Replace random-opponent equity with range-filtered equity using `src/gto/rangeModel.ts` (stub already noted in plan).
-2. Add a 13×13 preflop range visualization to the Review screen.
-3. Implement antes in the betting engine.
-4. Add a "hand history" screen to replay past hands.
+1. A 13×13 preflop range grid in the Review screen (the data in `gto/ranges.ts` is already grid-shaped).
+2. A session dashboard: accuracy trend, biggest EV losses, leak categories by concept tag.
+3. ICM-aware tournament adjustments near the bubble.
+4. A "hand history" screen to replay past hands.
 5. Hero rebuy in cash mode.
 
 ---

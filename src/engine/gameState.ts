@@ -22,6 +22,7 @@ export type StartHandOptions = {
   smallBlind: number;
   bigBlind: number;
   buttonSeat: number;
+  ante?: number; // per-player ante, posted before blinds (tournaments)
   deck?: Card[]; // for tests
 };
 
@@ -54,6 +55,7 @@ export function startHand(seeds: PlayerSeed[], opts: StartHandOptions): GameStat
     toAct: -1,
     smallBlind: opts.smallBlind,
     bigBlind: opts.bigBlind,
+    ante: opts.ante ?? 0,
     actionLog: [],
     decisions: [],
     winners: [],
@@ -72,6 +74,19 @@ export function startHand(seeds: PlayerSeed[], opts: StartHandOptions): GameStat
   }
   // Stash the remainder for board.
   state._deck = deck;
+
+  // Post antes first (they go to the pot but don't count toward the street bet).
+  if (state.ante > 0) {
+    for (const seat of orderFromButton(seats, opts.buttonSeat)) {
+      const p = playerBySeat(state, seat);
+      if (p.state !== 'active') continue;
+      const amt = Math.min(state.ante, p.stack);
+      p.stack -= amt;
+      p.totalContribution += amt;
+      state.pot += amt;
+      if (p.stack === 0) p.state = 'allin';
+    }
+  }
 
   // Post blinds. Use only active (chips-having) seats so busted seats are skipped.
   const orderAll = orderFromButton(seats, opts.buttonSeat);

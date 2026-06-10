@@ -1,4 +1,5 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import { DecisionGrade } from '@shared/types';
 import { useGameStore } from '@renderer/state/gameStore';
 import { useUIStore } from '@renderer/state/uiStore';
 import { PlayerSeat } from '../PlayerSeat/PlayerSeat';
@@ -85,6 +86,9 @@ export function Table() {
       {/* Action bar */}
       <ActionBar />
 
+      {/* Instant coaching feedback */}
+      <FeedbackToast />
+
       {/* Top-right buttons */}
       <div className="absolute top-4 right-4 flex gap-2">
         {state.street === 'complete' && (
@@ -122,6 +126,7 @@ function BlindBadge() {
         Blinds:{' '}
         <span className="font-semibold text-chip-gold">
           {state.smallBlind}/{state.bigBlind}
+          {state.ante > 0 ? ` (${state.ante})` : ''}
         </span>
       </div>
       {config.mode === 'tournament' && (
@@ -129,6 +134,45 @@ function BlindBadge() {
           Level {levelIndex + 1}/{config.levels?.length ?? '?'}
         </div>
       )}
+    </div>
+  );
+}
+
+const TOAST_STYLE: Record<DecisionGrade, { text: string; cls: string }> = {
+  best: { text: '✓ Best play', cls: 'border-chip-green/60 text-chip-green' },
+  good: { text: '✓ Good', cls: 'border-emerald-500/60 text-emerald-400' },
+  inaccuracy: { text: 'Inaccuracy', cls: 'border-yellow-500/60 text-yellow-400' },
+  mistake: { text: '✗ Mistake', cls: 'border-orange-500/60 text-orange-400' },
+  blunder: { text: '✗ Blunder', cls: 'border-red-500/60 text-red-400' },
+};
+
+function FeedbackToast() {
+  const feedback = useGameStore((s) => s.lastFeedback);
+  const [visibleId, setVisibleId] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!feedback) {
+      setVisibleId(null);
+      return;
+    }
+    setVisibleId(feedback.id);
+    const t = setTimeout(() => setVisibleId(null), 3500);
+    return () => clearTimeout(t);
+  }, [feedback]);
+
+  if (!feedback || visibleId !== feedback.id) return null;
+  const style = TOAST_STYLE[feedback.grade];
+  const showRec = feedback.grade !== 'best' && feedback.grade !== 'good';
+
+  return (
+    <div
+      className={`absolute top-5 left-1/2 -translate-x-1/2 bg-black/80 backdrop-blur px-4 py-2 rounded-lg border text-sm flex items-center gap-3 ${style.cls}`}
+    >
+      <span className="font-bold">{style.text}</span>
+      {feedback.evLossBB > 0.05 && (
+        <span className="text-white/60">est. −{feedback.evLossBB.toFixed(1)}bb</span>
+      )}
+      {showRec && <span className="text-white/80">GTO: {feedback.recommended}</span>}
     </div>
   );
 }

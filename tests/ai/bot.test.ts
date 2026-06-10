@@ -93,6 +93,25 @@ describe('decideAction', () => {
     }
   });
 
+  it('short-stacked bot jams a premium instead of min-raising', () => {
+    const shortSeeds = baseSeeds.map((sd) => ({ ...sd, stack: 16 })); // 8bb
+    const hole = new Map<number, [Card, Card]>([
+      [0, [cs('2c'), cs('3d')]],
+      [1, [cs('4c'), cs('5d')]],
+      [2, [cs('6c'), cs('7d')]],
+      [3, [cs('Ah'), cs('Kh')]], // UTG with AKs
+      [4, [cs('Tc'), cs('Th')]],
+      [5, [cs('Jc'), cs('Jh')]],
+      [6, [cs('Qc'), cs('Qh')]],
+      [7, [cs('Kc'), cs('Kd')]],
+    ]);
+    const deck = buildRiggedDeck(hole, 0);
+    const s = startHand(shortSeeds, { smallBlind: 1, bigBlind: 2, buttonSeat: 0, deck });
+    expect(s.toAct).toBe(3);
+    const action = decideAction(s, () => 0.01);
+    expect(action.type).toBe('allin');
+  });
+
   it('bot uses provided rng for determinism', () => {
     const seeds = baseSeeds.map((sd) => ({ ...sd, personality: 'LAG' as const }));
     const fixedRng = () => 0.5;

@@ -78,13 +78,15 @@ Use them. Don't use relative `../../../` paths across subsystem boundaries.
 
 | If you want to... | Edit |
 |---|---|
-| Add a new poker rule (e.g., antes) | `src/engine/gameState.ts` (`startHand`, `applyAction`, `advanceStreet`) |
+| Add a new poker rule | `src/engine/gameState.ts` (`startHand`, `applyAction`, `advanceStreet`) — antes are already supported via `StartHandOptions.ante` |
 | Change how a hand winner is determined | `src/engine/handEvaluator.ts` (wraps `pokersolver`) |
 | Add a new bot personality | `src/ai/personalities.ts` (add to the record + `PERSONALITY_LIST`) |
 | Change how bots decide | `src/ai/bot.ts` (`decidePreflop` / `decidePostflop`) |
 | Improve GTO recommendations | `src/gto/recommend.ts` — keep the `recommend(state, seat) → Recommendation` signature stable |
-| Add preflop chart spots | `src/gto/preflopCharts.ts` (`getPreflopAction`) |
-| Make equity range-aware | Add `src/gto/rangeModel.ts`, update `src/gto/equity.ts` and `recommend.ts` |
+| Edit preflop ranges (RFI/3bet/jam) | `src/gto/ranges.ts` — range-notation strings parsed by `parseRange` |
+| Change preflop mixed strategies | `src/gto/preflopCharts.ts` (`preflopMix`; `getPreflopAction` is the legacy single-action view) |
+| Change how villains are put on ranges | `src/gto/rangeModel.ts` (`modelVillainRanges`) |
+| Tune decision grading / accuracy | `src/gto/recommend.ts` (`gradeDecision`, `accuracyScore`) |
 | Add a new UI screen | Add component under `src/renderer/components/<Name>/`, add screen string to `uiStore.ts#Screen`, route it in `App.tsx` |
 | Add a new game mode | Extend `GameMode` and `GameConfig` in `src/renderer/state/gameStore.ts`; add a tab/form in `Lobby.tsx` |
 | Persist new data across launches | Add an IPC handler in `src/main/index.ts` + `src/main/persistence.ts`, expose via `src/preload/index.ts`, type via `src/renderer/preload-types.d.ts` |
@@ -114,9 +116,17 @@ The single source of truth for one hand of poker. Owns:
 
 ### `src/gto/recommend.ts` (the teaching surface)
 
-The single public function is `recommend(state, seat) → Recommendation`. **Don't change its signature** without updating `gameStore.submitHeroAction` and `Review.tsx`. This is the swap-out point for a future real solver.
+The main public function is `recommend(state, seat) → Recommendation`. **Don't change its signature** without updating `gameStore.submitHeroAction` and `Review.tsx`. This is the swap-out point for a future real solver.
 
-`snapshotFor(state, seat) → GameStateSnapshot` is also exported and used by the renderer to freeze the spot at decision time.
+`Recommendation` now carries a full **mixed strategy**: `strategy: StrategyOption[]` (action + amount + label + frequency, normalized to sum to 1, sorted descending), `concepts` tags, and optional `mdf` / `evCallBB` / `handCategory` / `villainRange`. `rec.action`/`rec.raiseSize` mirror `strategy[0]` for backwards compatibility.
+
+Also exported:
+
+- `snapshotFor(state, seat) → GameStateSnapshot` — freezes the spot at decision time (includes `bigBlind` for bb-display).
+- `gradeDecision(rec, actual, snapshot) → { grade, evLossBB }` — locates the actual action in the mix (top arm → `best`, secondary → `good`, rare → `inaccuracy`; off-mix actions get an estimated EV loss → `mistake`/`blunder`). Called by `gameStore.submitHeroAction` at capture time.
+- `accuracyScore(grades) → 0..100` — per-hand score used by the Review header.
+
+Pipeline per call: `modelVillainRanges` (puts every live opponent on a weighted combo range from the action log) → `equityVsCombos` (range-aware Monte Carlo) → preflop chart mix or postflop hand-class/texture strategy builder.
 
 ### `src/renderer/state/gameStore.ts` (the renderer's source of truth)
 
@@ -140,7 +150,7 @@ A single Zustand store that drives the entire game UI. Key flows:
 ```bash
 npm install              # one-time
 npm run dev              # launch Electron with HMR
-npm test                 # all 61 Vitest tests
+npm test                 # all 100 Vitest tests
 npm run test:watch       # watch mode
 npm run typecheck        # tsc --noEmit
 npm run build            # bundle main+preload+renderer to out/
@@ -177,9 +187,13 @@ In `applyAction` for bet/raise/all-in, we **only** reset other players' `_actedS
 
 In real poker, dealing begins one seat left of the button. The engine deals in `orderFromButton` order which starts at the button. This is functionally equivalent for a random deck but matters for **test fixtures** that rig the deck. The `buildRiggedDeck` helper in `tests/ai/bot.test.ts` and `tests/gto/recommend.test.ts` matches the engine's order — preserve that convention if you add similar helpers.
 
-### 7. Equity is vs random opponents in the MVP
+### 7. Equity is range-aware — keep test tolerances loose
 
-`monteCarloEquity` deals opponents random hands, not range-filtered hands. Tests assert ranges that reflect this (e.g., flopped flush on a 3-card board is ~60-65% vs random, not 90%+). If you make equity range-aware, **update the equity test expectations** to match.
+The coach uses `equityVsCombos` with villain ranges from `gto/rangeModel.ts`; `monteCarloEquity` (vs random hands) remains as the baseline/fallback. Equity tests assert *bands*, not exact values, because both are Monte Carlo — keep new assertions tolerant (±5% or wider) or they'll flake.
+
+### 7b. Antes and short-handed positions
+
+`startHand` posts antes (`opts.ante`) to the pot and `totalContribution` but **not** to `Player.bet` — don't make antes count toward the street bet or calling math breaks. Short-handed tables keep the *late* positions (6-max = BTN/SB/BB/MP/HJ/CO) so chart lookups stay correct as players bust; `MP1` no longer exists in the `Position` type.
 
 ### 8. Adding a new screen to `uiStore.Screen`
 
@@ -194,7 +208,8 @@ The `recommend` function is the deliberate plug-in point. If you replace its int
 1. Keep the `recommend(state, seat) → Recommendation` signature.
 2. Keep the `Recommendation` shape (`action`, optional `raiseSize`, `equity`, `potOdds`, `reason`).
 3. Update `tests/gto/recommend.test.ts` if your model produces different (more accurate) recommendations than the heuristic.
-4. The UI (`Review.tsx`) only reads `recommendation.{action, raiseSize, equity, potOdds, reason}` — anything you add beyond that needs UI work too.
+4. The UI (`Review.tsx`) reads `recommendation.{strategy, concepts, equity, potOdds, mdf, evCallBB, handCategory, villainRange, reason}` and `decision.{grade, evLossBB}` — keep `strategy` normalized (frequencies sum to 1, sorted desc) or the mix bar renders wrong.
+5. Run `npx tsx scripts/smoke.ts` after engine changes — it plays hundreds of headless hands and fails on any illegal/inconsistent recommendation.
 
 ---
 

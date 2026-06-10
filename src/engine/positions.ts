@@ -1,6 +1,7 @@
 import { Position } from '@shared/types';
 
-const POSITION_NAMES_8MAX: Position[] = ['BTN', 'SB', 'BB', 'UTG', 'UTG1', 'MP', 'HJ', 'CO'];
+/** Non-blind, non-button positions from earliest to latest. */
+const EARLY_TO_LATE: Position[] = ['UTG', 'UTG1', 'MP', 'HJ', 'CO'];
 
 /**
  * Assign poker positions for an 8-max table given the active player seats
@@ -17,7 +18,13 @@ export function assignPositions(seats: number[], buttonSeat: number): Map<number
   const ordered: number[] = [];
   for (let i = 0; i < n; i++) ordered.push(sorted[(btnIndex + i) % n]);
 
-  const names = n === 2 ? (['BTN', 'BB'] as Position[]) : POSITION_NAMES_8MAX.slice(0, n);
+  // Short-handed tables keep the *late* positions (a 6-max table has MP/HJ/CO,
+  // not UTG/UTG1/MP) so each label keeps the same number of players behind it
+  // and preflop charts stay accurate as players bust.
+  const names: Position[] =
+    n === 2
+      ? ['BTN', 'BB']
+      : ['BTN', 'SB', 'BB', ...EARLY_TO_LATE.slice(EARLY_TO_LATE.length - (n - 3))];
 
   const result = new Map<number, Position>();
   ordered.forEach((seat, i) => result.set(seat, names[i]));

@@ -16,6 +16,13 @@ export type Personality = {
   betSize: number;
   /** Re-raise size multiplier vs the bet they face. */
   raiseMultiplier: number;
+  /**
+   * Skew on GTO raise frequencies: >1 raises mixed hands more often, <1 less.
+   * Applied as freq^(1/aggression), so pure (0/1) strategies stay pure.
+   */
+  aggression: number;
+  /** Same skew applied to GTO calling frequencies. */
+  looseness: number;
 };
 
 export const PERSONALITIES: Record<PersonalityName, Personality> = {
@@ -28,6 +35,8 @@ export const PERSONALITIES: Record<PersonalityName, Personality> = {
     bluffFreq: 0.15,
     betSize: 0.66,
     raiseMultiplier: 3.0,
+    aggression: 1.0,
+    looseness: 0.9,
   },
   LAG: {
     name: 'LAG',
@@ -38,6 +47,8 @@ export const PERSONALITIES: Record<PersonalityName, Personality> = {
     bluffFreq: 0.3,
     betSize: 0.75,
     raiseMultiplier: 3.5,
+    aggression: 1.6,
+    looseness: 1.4,
   },
   Rock: {
     name: 'Rock',
@@ -48,6 +59,8 @@ export const PERSONALITIES: Record<PersonalityName, Personality> = {
     bluffFreq: 0.03,
     betSize: 0.5,
     raiseMultiplier: 2.5,
+    aggression: 0.65,
+    looseness: 0.7,
   },
   Station: {
     name: 'Station',
@@ -58,6 +71,8 @@ export const PERSONALITIES: Record<PersonalityName, Personality> = {
     bluffFreq: 0.05,
     betSize: 0.5,
     raiseMultiplier: 2.5,
+    aggression: 0.45,
+    looseness: 1.9,
   },
   GTO: {
     name: 'GTO',
@@ -68,6 +83,8 @@ export const PERSONALITIES: Record<PersonalityName, Personality> = {
     bluffFreq: 0.2,
     betSize: 0.66,
     raiseMultiplier: 3.0,
+    aggression: 1.0,
+    looseness: 1.0,
   },
 };
 

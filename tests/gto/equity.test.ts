@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { monteCarloEquity } from '@gto/equity';
+import { monteCarloEquity, equityVsCombos } from '@gto/equity';
+import { rangeToCombos, RFI, fullRange } from '@gto/ranges';
 import { stringToCard } from '@engine/deck';
 
 const cs = (s: string) => stringToCard(s);
@@ -32,5 +33,33 @@ describe('monteCarloEquity', () => {
     const eq1 = monteCarloEquity([cs('Ah'), cs('Ad')], [], 1, 1000);
     const eq7 = monteCarloEquity([cs('Ah'), cs('Ad')], [], 7, 1000);
     expect(eq1).toBeGreaterThan(eq7);
+  });
+});
+
+describe('equityVsCombos (range-aware)', () => {
+  it('AA still dominates a tight UTG range', () => {
+    const hero = [cs('Ah'), cs('Ad')];
+    const combos = rangeToCombos(RFI.UTG!, hero);
+    const eq = equityVsCombos(hero, [], [combos], 1200);
+    expect(eq).toBeGreaterThan(0.72);
+    expect(eq).toBeLessThan(0.92);
+  });
+
+  it('KQo fares much worse vs a tight UTG range than vs a random hand', () => {
+    const hero = [cs('Kh'), cs('Qd')];
+    const vsRandom = equityVsCombos(hero, [], [rangeToCombos(fullRange(), hero)], 1200);
+    const vsUtg = equityVsCombos(hero, [], [rangeToCombos(RFI.UTG!, hero)], 1200);
+    expect(vsUtg).toBeLessThan(vsRandom - 0.05);
+  });
+
+  it('vs full-range combos matches the random-hand model', () => {
+    const hero = [cs('Ah'), cs('Ad')];
+    const viaRanges = equityVsCombos(hero, [], [rangeToCombos(fullRange(), hero)], 1500);
+    expect(viaRanges).toBeGreaterThan(0.8);
+    expect(viaRanges).toBeLessThan(0.92);
+  });
+
+  it('returns 1 with no villains', () => {
+    expect(equityVsCombos([cs('2h'), cs('3d')], [], [], 10)).toBe(1);
   });
 });

@@ -28,6 +28,23 @@ describe('assignPositions', () => {
     expect(positions.get(2)).toBe('CO');
   });
 
+  it('6-max keeps late positions: BTN/SB/BB/MP/HJ/CO', () => {
+    const positions = assignPositions([0, 1, 2, 3, 4, 5], 0);
+    expect(positions.get(0)).toBe('BTN');
+    expect(positions.get(1)).toBe('SB');
+    expect(positions.get(2)).toBe('BB');
+    expect(positions.get(3)).toBe('MP');
+    expect(positions.get(4)).toBe('HJ');
+    expect(positions.get(5)).toBe('CO');
+  });
+
+  it('3-handed is just BTN/SB/BB', () => {
+    const positions = assignPositions([0, 1, 2], 1);
+    expect(positions.get(1)).toBe('BTN');
+    expect(positions.get(2)).toBe('SB');
+    expect(positions.get(0)).toBe('BB');
+  });
+
   it('throws if button seat is not in seats', () => {
     expect(() => assignPositions([0, 1, 2], 5)).toThrow();
   });

@@ -1,7 +1,12 @@
-import { GameState, PlayerAction } from '@shared/types';
+import { GameState, Player, PlayerAction } from '@shared/types';
 import { getPlayer, legalActions } from '@engine/gameState';
+import {
+  buildPreflopContext,
+  preflopMix,
+  preflopRaiseChips,
+} from '@gto/preflopCharts';
 import { Personality, PERSONALITIES, PersonalityName } from './personalities';
-import { strengthFor } from './handStrength';
+import { detectDraws, strengthFor } from './handStrength';
 
 /** Choose an action for the bot currently to act. */
 export function decideAction(state: GameState, rng: () => number = Math.random): PlayerAction {
@@ -10,62 +15,57 @@ export function decideAction(state: GameState, rng: () => number = Math.random):
     (p.personality as PersonalityName) ?? 'TAG';
   const personality = PERSONALITIES[personalityName];
   const la = legalActions(state);
-  const strength = strengthFor(p.holeCards, state.board, state.street);
 
-  const potOdds = la.canCall
-    ? la.callAmount / (state.pot + la.callAmount)
-    : 0;
-
-  // Preflop logic.
   if (state.street === 'preflop') {
-    return decidePreflop(state, personality, strength, la, potOdds, rng);
+    return decidePreflop(state, p, personality, la, rng);
   }
-  // Postflop logic.
-  return decidePostflop(state, personality, strength, la, potOdds, rng);
+  return decidePostflop(state, p, personality, la, rng);
 }
 
+/**
+ * Preflop: sample from the GTO chart mix, skewed by personality.
+ * freq^(1/aggression) keeps pure strategies pure while shifting mixed hands.
+ */
 function decidePreflop(
   state: GameState,
+  p: Player,
   pers: Personality,
-  strength: number,
   la: ReturnType<typeof legalActions>,
-  potOdds: number,
-  _rng: () => number
+  rng: () => number
 ): PlayerAction {
-  const facingRaise = state.currentBet > state.bigBlind;
+  const ctx = buildPreflopContext(state, state.toAct);
+  const mix = preflopMix(p.holeCards, ctx);
 
-  if (!facingRaise) {
-    // No raise yet → either open-raise, limp (rare), or fold.
-    if (strength >= pers.openThreshold && la.canBetOrRaise) {
-      const raiseTo = Math.min(
-        Math.round(state.bigBlind * pers.raiseMultiplier),
-        la.maxRaiseTotal
-      );
-      if (raiseTo >= la.minRaiseTotal) {
-        return { type: 'raise', amount: raiseTo };
-      }
-    }
+  const skew = (freq: number, factor: number): number =>
+    freq <= 0 ? 0 : freq >= 1 ? 1 : Math.pow(freq, 1 / factor);
+
+  let raise = skew(mix.raise, pers.aggression);
+  let call = skew(mix.call, pers.looseness);
+  // Passive players turn some of their raises into calls instead of folds.
+  if (pers.aggression < 1) {
+    call = Math.min(1, call + (mix.raise - raise) * (pers.looseness > 1 ? 0.9 : 0.3));
+  }
+  if (raise + call > 1) {
+    const scale = 1 / (raise + call);
+    raise *= scale;
+    call *= scale;
+  }
+
+  const roll = rng();
+  if (roll < raise && la.canBetOrRaise) {
+    if (mix.jam) return { type: 'allin' };
+    let amount = preflopRaiseChips(state, la, mix.sizeKind, ctx.position, {
+      limpers: ctx.limpers,
+      inPosition: true,
+    });
+    amount = Math.round((amount * pers.raiseMultiplier) / 3);
+    amount = Math.min(Math.max(amount, la.minRaiseTotal), la.maxRaiseTotal);
+    if (amount >= la.maxRaiseTotal) return { type: 'allin' };
+    return { type: 'raise', amount };
+  }
+  if (roll < raise + call) {
     if (la.canCheck) return { type: 'check' };
-    // Facing only blinds — limp with marginal, fold weak.
-    if (strength >= pers.openThreshold * 0.85 && potOdds < 0.15) {
-      return { type: 'call' };
-    }
-    return { type: 'fold' };
-  }
-
-  // Facing a raise.
-  if (strength >= pers.callRaiseThreshold + 0.15 && la.canBetOrRaise) {
-    // Strong: 3bet
-    const raiseTo = Math.min(
-      Math.round(state.currentBet * pers.raiseMultiplier),
-      la.maxRaiseTotal
-    );
-    if (raiseTo >= la.minRaiseTotal) {
-      return { type: 'raise', amount: raiseTo };
-    }
-  }
-  if (strength >= pers.callRaiseThreshold && la.canCall) {
-    return { type: 'call' };
+    if (la.canCall) return { type: 'call' };
   }
   if (la.canCheck) return { type: 'check' };
   return { type: 'fold' };
@@ -73,15 +73,22 @@ function decidePreflop(
 
 function decidePostflop(
   state: GameState,
+  p: Player,
   pers: Personality,
-  strength: number,
   la: ReturnType<typeof legalActions>,
-  potOdds: number,
   rng: () => number
 ): PlayerAction {
+  const strength = strengthFor(p.holeCards, state.board, state.street);
+  const draws = detectDraws(p.holeCards, state.board);
+  const strongDraw = draws.flushDraw || draws.oesd;
+  const potOdds = la.canCall ? la.callAmount / (state.pot + la.callAmount) : 0;
   const facingBet = state.currentBet > 0;
 
   if (!facingBet) {
+    // Short-stacked with a real hand: jam rather than leave crumbs behind.
+    if (la.canBetOrRaise && p.stack <= state.pot && strength >= 0.55) {
+      return { type: 'allin' };
+    }
     if (strength >= pers.valueBetThreshold && la.canBetOrRaise) {
       const betAmt = Math.max(
         state.bigBlind,
@@ -92,9 +99,10 @@ function decidePostflop(
         return { type: 'bet', amount: total };
       }
     }
-    // Bluff sometimes from weak hands.
-    if (rng() < pers.bluffFreq && la.canBetOrRaise) {
-      const betAmt = Math.max(state.bigBlind, Math.round(state.pot * 0.5));
+    // Semi-bluff draws and occasionally bluff air.
+    const bluffChance = strongDraw ? Math.min(0.6, pers.bluffFreq * 2) : pers.bluffFreq;
+    if (rng() < bluffChance && la.canBetOrRaise) {
+      const betAmt = Math.max(state.bigBlind, Math.round(state.pot * 0.6));
       const total = Math.min(betAmt, la.maxRaiseTotal);
       if (total >= la.minRaiseTotal) return { type: 'bet', amount: total };
     }
@@ -108,10 +116,29 @@ function decidePostflop(
       la.maxRaiseTotal
     );
     if (raiseTo >= la.minRaiseTotal) {
+      if (raiseTo >= la.maxRaiseTotal) return { type: 'allin' };
       return { type: 'raise', amount: raiseTo };
     }
   }
-  // Call if strength > pot-odds-adjusted threshold.
+  // Draws: semi-bluff raise occasionally, otherwise call with a fair price.
+  if (strongDraw && state.street !== 'river') {
+    if (rng() < pers.bluffFreq * 0.6 && la.canBetOrRaise) {
+      const raiseTo = Math.min(Math.round(state.currentBet * 2.7), la.maxRaiseTotal);
+      if (raiseTo >= la.minRaiseTotal && raiseTo < la.maxRaiseTotal) {
+        return { type: 'raise', amount: raiseTo };
+      }
+    }
+    if (la.canCall && potOdds <= 0.34) return { type: 'call' };
+  }
+  if (
+    draws.gutshot &&
+    draws.overcards >= 1 &&
+    state.street !== 'river' &&
+    la.canCall &&
+    potOdds <= 0.22
+  ) {
+    return { type: 'call' };
+  }
   const effectiveThreshold = Math.max(pers.callBetThreshold, potOdds);
   if (strength >= effectiveThreshold && la.canCall) {
     return { type: 'call' };

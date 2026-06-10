@@ -16,8 +16,29 @@ export function ActionBar() {
 
   if (!state || !la) return null;
 
+  const bb = state.bigBlind;
   const currentRaise = raiseAmount || defaultRaise;
   const clamped = Math.max(la.minRaiseTotal, Math.min(la.maxRaiseTotal, currentRaise));
+  const potOdds = la.canCall ? la.callAmount / (state.pot + la.callAmount) : 0;
+
+  // Pot-fraction presets: total = own bet + call + fraction * (pot after calling).
+  const heroBet = state.players.find((p) => p.seat === heroSeat)?.bet ?? 0;
+  const presetTotal = (fraction: number) => {
+    const raw = heroBet + la.callAmount + fraction * (state.pot + la.callAmount);
+    return Math.round(Math.max(la.minRaiseTotal, Math.min(la.maxRaiseTotal, raw)));
+  };
+  const presets: { label: string; value: number }[] = [
+    { label: '33%', value: presetTotal(0.33) },
+    { label: '50%', value: presetTotal(0.5) },
+    { label: '75%', value: presetTotal(0.75) },
+    { label: 'Pot', value: presetTotal(1) },
+    { label: 'All-in', value: la.maxRaiseTotal },
+  ];
+
+  const asBB = (chips: number) => {
+    const v = chips / bb;
+    return `${v >= 10 ? Math.round(v) : Math.round(v * 10) / 10}bb`;
+  };
 
   return (
     <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex items-end gap-3 bg-black/70 px-4 py-3 rounded-xl border border-white/10 backdrop-blur">
@@ -39,9 +60,14 @@ export function ActionBar() {
         <button
           onClick={() => submit({ type: 'call' })}
           disabled={!la.canCall}
-          className="px-5 py-3 rounded-lg bg-chip-blue hover:bg-chip-blue/80 disabled:opacity-40 font-semibold"
+          className="px-5 py-3 rounded-lg bg-chip-blue hover:bg-chip-blue/80 disabled:opacity-40 font-semibold flex flex-col items-center leading-tight"
         >
-          Call {la.callAmount}
+          <span>
+            Call {la.callAmount} <span className="opacity-70 text-xs">({asBB(la.callAmount)})</span>
+          </span>
+          <span className="text-[10px] opacity-70 font-normal">
+            need {(potOdds * 100).toFixed(0)}% equity
+          </span>
         </button>
       )}
       {la.canBetOrRaise && la.maxRaiseTotal > la.minRaiseTotal && (
@@ -53,42 +79,45 @@ export function ActionBar() {
             step={1}
             value={clamped}
             onChange={(e) => setRaiseAmount(Number(e.target.value))}
-            className="w-44"
+            className="w-48"
           />
           <div className="flex gap-1 text-xs">
             <button
               onClick={() => setRaiseAmount(la.minRaiseTotal)}
-              className="px-1.5 py-0.5 bg-white/10 rounded"
+              className="px-1.5 py-0.5 bg-white/10 hover:bg-white/20 rounded"
             >
               Min
             </button>
-            <button
-              onClick={() => setRaiseAmount(Math.round(state.pot * 0.5))}
-              className="px-1.5 py-0.5 bg-white/10 rounded"
-            >
-              ½ pot
-            </button>
-            <button
-              onClick={() => setRaiseAmount(state.pot)}
-              className="px-1.5 py-0.5 bg-white/10 rounded"
-            >
-              Pot
-            </button>
-            <button
-              onClick={() => setRaiseAmount(la.maxRaiseTotal)}
-              className="px-1.5 py-0.5 bg-white/10 rounded"
-            >
-              All-in
-            </button>
+            {presets.map((p) => (
+              <button
+                key={p.label}
+                onClick={() => setRaiseAmount(p.value)}
+                className="px-1.5 py-0.5 bg-white/10 hover:bg-white/20 rounded"
+              >
+                {p.label}
+              </button>
+            ))}
           </div>
         </div>
       )}
       {la.canBetOrRaise && (
         <button
-          onClick={() => submit({ type: 'raise', amount: clamped })}
-          className="px-5 py-3 rounded-lg bg-chip-green hover:bg-chip-green/80 font-semibold"
+          onClick={() =>
+            clamped >= la.maxRaiseTotal
+              ? submit({ type: 'allin' })
+              : submit({ type: 'raise', amount: clamped })
+          }
+          className="px-5 py-3 rounded-lg bg-chip-green hover:bg-chip-green/80 font-semibold flex flex-col items-center leading-tight"
         >
-          {state.currentBet === 0 ? 'Bet' : 'Raise to'} {clamped}
+          <span>
+            {clamped >= la.maxRaiseTotal
+              ? 'All-in'
+              : state.currentBet === 0
+              ? 'Bet'
+              : 'Raise to'}{' '}
+            {clamped}
+          </span>
+          <span className="text-[10px] opacity-70 font-normal">{asBB(clamped)}</span>
         </button>
       )}
     </div>

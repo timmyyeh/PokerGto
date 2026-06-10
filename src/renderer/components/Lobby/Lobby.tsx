@@ -78,7 +78,8 @@ export function Lobby() {
     <div className="flex flex-col items-center justify-center h-full gap-6 p-8">
       <h1 className="text-5xl font-bold text-chip-gold">Poker Coach</h1>
       <p className="text-white/70 max-w-md text-center">
-        8-max NLHE vs AI opponents with GTO-flavored post-hand review.
+        8-max NLHE vs AI opponents. Range-based GTO coaching: strategy mixes, equity vs range,
+        pot odds and instant feedback on every decision you make.
       </p>
 
       <div className="flex gap-2">

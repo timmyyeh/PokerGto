@@ -16,7 +16,6 @@ export type Position =
   | 'UTG'
   | 'UTG1'
   | 'MP'
-  | 'MP1'
   | 'HJ'
   | 'CO';
 
@@ -57,6 +56,7 @@ export type GameState = {
   toAct: number;
   smallBlind: number;
   bigBlind: number;
+  ante: number;
   actionLog: ActionLogEntry[];
   decisions: Decision[];
   winners: number[];
@@ -71,12 +71,40 @@ export type ActionLogEntry = {
   potAfter: number;
 };
 
+/** One arm of a GTO-style mixed strategy, e.g. "Bet 66% pot — 70%". */
+export type StrategyOption = {
+  action: ActionType;
+  /** Total chips committed this street, for bet/raise/allin options. */
+  amount?: number;
+  /** Human label, e.g. "Raise to 5.5bb" or "Bet 12 (66% pot)". */
+  label: string;
+  /** Frequency 0..1; options in a strategy sum to ~1. */
+  frequency: number;
+};
+
+export type DecisionGrade = 'best' | 'good' | 'inaccuracy' | 'mistake' | 'blunder';
+
 export type Recommendation = {
+  /** Primary (highest-frequency) action — kept for backwards compatibility. */
   action: ActionType;
   raiseSize?: number;
+  /** Hero equity vs the modeled villain ranges (not random hands). */
   equity: number;
+  /** Required equity to call (call / (pot + call)); 0 when no bet faced. */
   potOdds: number;
   reason: string;
+  /** Full GTO-style strategy mix, sorted by frequency descending. */
+  strategy: StrategyOption[];
+  /** Concept tags driving the recommendation, e.g. ["Pot odds", "Semi-bluff"]. */
+  concepts: string[];
+  /** Minimum defense frequency vs the bet faced (only when facing a bet). */
+  mdf?: number;
+  /** EV of calling, in big blinds (only when facing a bet). */
+  evCallBB?: number;
+  /** Plain-language hand class, e.g. "Strong draw". */
+  handCategory?: string;
+  /** Summary of modeled villain ranges, e.g. "CO opener (~28% of hands)". */
+  villainRange?: string;
 };
 
 export type Decision = {
@@ -85,6 +113,9 @@ export type Decision = {
   snapshot: GameStateSnapshot;
   actual: PlayerAction;
   recommendation: Recommendation;
+  grade: DecisionGrade;
+  /** Estimated EV lost vs the recommended play, in big blinds. */
+  evLossBB: number;
 };
 
 export type GameStateSnapshot = {
@@ -96,4 +127,5 @@ export type GameStateSnapshot = {
   position?: Position;
   numActiveOpponents: number;
   street: Street;
+  bigBlind: number;
 };

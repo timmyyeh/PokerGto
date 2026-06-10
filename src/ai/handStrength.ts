@@ -69,6 +69,62 @@ export function strengthFor(hole: Card[], board: Card[], street: Street): number
   return postflopStrength(hole, board);
 }
 
+export type DrawInfo = {
+  flushDraw: boolean;
+  oesd: boolean;
+  gutshot: boolean;
+  /** Hole cards ranking above the highest board card. */
+  overcards: number;
+};
+
+/** Draws the *hero's hole cards* participate in (board-only draws don't count). */
+export function detectDraws(hole: Card[], board: Card[]): DrawInfo {
+  const none: DrawInfo = { flushDraw: false, oesd: false, gutshot: false, overcards: 0 };
+  if (board.length < 3) return none;
+  const boardMax = Math.max(...board.map((c) => RANK_VALUE[c.rank]));
+  const overcards = hole.filter((c) => RANK_VALUE[c.rank] > boardMax).length;
+  if (board.length >= 5) return { ...none, overcards };
+
+  // Flush draw: exactly 4 of a suit among all cards, at least one from the hole.
+  const suitCounts: Record<string, number> = { s: 0, h: 0, d: 0, c: 0 };
+  for (const c of [...hole, ...board]) suitCounts[c.suit]++;
+  const flushDraw = (['s', 'h', 'd', 'c'] as const).some(
+    (s) => suitCounts[s] === 4 && hole.some((c) => c.suit === s)
+  );
+
+  // Straight draws: count distinct ranks that complete a 5-run using a hole card.
+  const all = new Set([...hole, ...board].map((c) => RANK_VALUE[c.rank]));
+  const holeRanks = new Set(hole.map((c) => RANK_VALUE[c.rank]));
+  if (all.has(14)) all.add(1);
+  if (holeRanks.has(14)) holeRanks.add(1);
+
+  let fillers = 0;
+  let madeStraight = false;
+  for (let lo = 1; lo <= 10; lo++) {
+    const run = [lo, lo + 1, lo + 2, lo + 3, lo + 4];
+    const missing = run.filter((v) => !all.has(v));
+    const usesHole = run.some((v) => holeRanks.has(v));
+    if (missing.length === 0 && usesHole) madeStraight = true;
+  }
+  if (!madeStraight) {
+    const fillerSet = new Set<number>();
+    for (let lo = 1; lo <= 10; lo++) {
+      const run = [lo, lo + 1, lo + 2, lo + 3, lo + 4];
+      const missing = run.filter((v) => !all.has(v));
+      const usesHole = run.some((v) => holeRanks.has(v));
+      if (missing.length === 1 && usesHole) fillerSet.add(missing[0]);
+    }
+    fillers = fillerSet.size;
+  }
+
+  return {
+    flushDraw,
+    oesd: fillers >= 2,
+    gutshot: fillers === 1,
+    overcards,
+  };
+}
+
 function hasFlushDraw(hole: Card[], board: Card[]): boolean {
   const all = [...hole, ...board];
   const counts: Record<string, number> = { s: 0, h: 0, d: 0, c: 0 };
