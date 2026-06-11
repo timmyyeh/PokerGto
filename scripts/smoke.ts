@@ -10,14 +10,17 @@ import { decideAction } from '../src/ai/bot';
 import { recommend, snapshotFor, gradeDecision } from '../src/gto/recommend';
 import { PERSONALITY_LIST } from '../src/ai/personalities';
 
-const HANDS = 150;
+const HANDS = 1000;
+
+/** Cycle through deep, mid, shallow, and push/fold stack depths. */
+const STACK_DEPTHS = [200, 100, 40, 18, 12]; // 100bb, 50bb, 20bb, 9bb, 6bb at 1/2
 let recCalls = 0;
 let recMs = 0;
 const grades: Record<string, number> = {};
 const streets: Record<string, number> = {};
 
 for (let h = 0; h < HANDS; h++) {
-  const stack = h % 3 === 2 ? 18 : 200; // every third hand is short-stacked
+  const stack = STACK_DEPTHS[h % STACK_DEPTHS.length];
   const seeds = Array.from({ length: 8 }, (_, i) => ({
     seat: i,
     name: i === 0 ? 'Hero' : `Bot${i}`,
@@ -97,7 +100,7 @@ console.log('decisions by street:', streets);
 // then follows the coach postflop. Verifies legality + stability only.
 // ---------------------------------------------------------------------------
 const postflopStreets: Record<string, number> = {};
-for (let h = 0; h < 120; h++) {
+for (let h = 0; h < 300; h++) {
   const seeds = Array.from({ length: 8 }, (_, i) => ({
     seat: i,
     name: i === 0 ? 'Hero' : `Bot${i}`,

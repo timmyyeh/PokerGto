@@ -377,7 +377,7 @@ poker-coach/
 | `tests/gto/preflopCharts.test.ts` | Mix frequencies sum to 1, jam-or-fold at 8bb, 5-bet trees, legacy chart sanity |
 | `tests/gto/recommend.test.ts` | Strategy mix normalization, short-stack jams, decision grading tiers, accuracy score |
 
-There is also a headless smoke simulation (`npx tsx scripts/smoke.ts`) that plays hundreds of full hands with the hero following the coach, asserting every recommendation is legal, self-consistent (*following the coach always grades "Best"*), and fast (~30ms per recommendation).
+There is also a headless smoke simulation (`npx tsx scripts/smoke.ts`) that plays **1,300 full hands** (1,000 with the hero following the coach across 100bb/50bb/20bb/9bb/6bb stack depths and ante hands, plus 300 forced-postflop stress hands), asserting every recommendation is legal, self-consistent (*following the coach always grades "Best"*), chips are conserved, and latency stays ~30ms per recommendation. Takes about a minute.
 
 ### Adding a new test
 
